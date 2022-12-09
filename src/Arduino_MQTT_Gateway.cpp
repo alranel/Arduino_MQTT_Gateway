@@ -132,6 +132,8 @@ void BoolProperty::updateFromMQTT_JSON(const JsonVariant& payload)
   if (payload.is<bool>()) {
     *_var = payload.as<bool>();
     updateLastSeen();
+  } else if (payload.is<const char*>()) {
+    updateFromMQTT(payload.as<const char *>());
   }
 }
 
