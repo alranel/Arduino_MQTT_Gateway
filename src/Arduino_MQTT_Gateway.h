@@ -22,6 +22,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "TinyMqtt/TinyMqtt.h"
 #include <ArduinoJson.h>
 #include <string>
+#include <vector>
+
+#define DEBUG_MQTT_GATEWAY 0
 
 namespace AMG {
 

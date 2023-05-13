@@ -41,12 +41,20 @@ void Gateway::loop()
 
     Serial.println("*** Starting Arduino MQTT Broker ***");
 
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+    WiFi.setHostname(_hostname);
+
     if (!MDNS.begin(_hostname)) {
       Serial.println("Error setting up MDNS responder!");
       while (1) delay(1000);
     }
+    MDNS.addService("mqtt", "tcp", _port);
 
-    Serial.print("mqtt://arduino-broker.local (");
+    Serial.print("mqtt://");
+    Serial.print(_hostname);
+    Serial.print(".local:");
+    Serial.print(_port);
+    Serial.print(" (");
     Serial.print(WiFi.localIP());
     Serial.println(")");
 
@@ -71,9 +79,18 @@ void Gateway::loop()
   // and we need to keep a copy of the values ourselves.
   for (Property* p : ArduinoMQTTGateway._properties) {
     if (p->hasChanged()) {
+#ifdef DEBUG_MQTT_GATEWAY
+      Serial.println("Property has changed since last loop!");
+#endif
       // This means it was changed from cloud or from our loop(), so we need to sync
       // it to the MQTT device.
       if (p->_command_topic != nullptr) {
+#ifdef DEBUG_MQTT_GATEWAY
+        Serial.print("-> publishing MQTT update to ");
+        Serial.print(p->_command_topic);
+        Serial.print("; payload = ");
+        Serial.println(p->getCommandPayload().c_str());
+#endif
         _mqtt_client->publish(p->_command_topic, p->getCommandPayload());
       }
       p->updateLastSeen();
@@ -94,7 +111,16 @@ void Gateway::onMsg(const TinyMqttClient* client, const Topic& topic, const char
 
   for (Property* p : ArduinoMQTTGateway._properties) {
     if (strcmp(topic.c_str(), p->_state_topic) != 0) continue;
-    if ((millis() - p->_last_seen) < IGNORE_STATES_FOR) continue;
+    if ((millis() - p->_last_seen) < IGNORE_STATES_FOR) {
+#ifdef DEBUG_MQTT_GATEWAY
+      Serial.print("millis() = ");
+      Serial.print(millis());
+      Serial.print("; p->_last_seen = ");
+      Serial.print(p->_last_seen);
+      Serial.println("; < IGNORE_STATES_FOR; skipping");
+#endif
+      continue;
+    }
        
     // If a JSON field was specified, extract payload from it
     if (p->_state_json_field != nullptr) {
