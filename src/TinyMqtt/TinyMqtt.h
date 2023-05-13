@@ -1,7 +1,9 @@
 // vim: ts=2 sw=2 expandtab
 #pragma once
-#define TINY_MQTT_DEBUG 0
 #define MqttClient TinyMqttClient
+#ifndef TINY_MQTT_DEBUG
+#define TINY_MQTT_DEBUG 0
+#endif
 
 // TODO Should add a AUnit with both TINY_MQTT_ASYNC and not TINY_MQTT_ASYNC
 // #define TINY_MQTT_ASYNC  // Uncomment this to use ESPAsyncTCP instead of normal cnx
@@ -35,10 +37,13 @@
 #include <set>
 #include <string>
 #include "StringIndexer.h"
+using namespace std;
 
-#if TINY_MQTT_DEBUG
+#define TINY_MQTT_DEFAULT_CLIENT_ID "Tiny"
+
 #include <TinyStreaming.h>
-#include <TinyConsole.h>    // https://github.com/hsaturn/TinyConsole
+#if TINY_MQTT_DEBUG
+  #include <TinyConsole.h>    // https://github.com/hsaturn/TinyConsole
   struct TinyMqtt
   {
     static int debug;
@@ -64,12 +69,15 @@ enum __attribute__((packed)) MqttError
   MqttInvalidMessage=2,
 };
 
+using string = TinyConsole::string;
+
 class Topic : public IndexedString
 {
   public:
+    Topic(const string& m) : IndexedString(m){}
     Topic(const char* s, uint8_t len) : IndexedString(s,len){}
     Topic(const char* s) : Topic(s, strlen(s)) {}
-    Topic(const std::string s) : Topic(s.c_str(), s.length()){};
+    // Topic(const string s) : Topic(s.c_str(), s.length()){};
 
     const char* c_str() const { return str().c_str(); }
 
@@ -118,7 +126,7 @@ class MqttMessage
     void incoming(char byte);
     void add(char byte) { incoming(byte); }
     void add(const char* p, size_t len, bool addLength=true );
-    void add(const std::string& s) { add(s.c_str(), s.length()); }
+    void add(const string& s) { add(s.c_str(), s.length()); }
     void add(const Topic& t) { add(t.str()); }
     const char* end() const { return &buffer[0]+buffer.size(); }
     const char* getVHeader() const { return &buffer[vheader]; }
@@ -152,7 +160,7 @@ class MqttMessage
   private:
     void encodeLength();
 
-    std::string buffer;
+    string buffer;
     uint8_t vheader;
     uint16_t size;  // bytes left to receive
     State state;
@@ -161,7 +169,6 @@ class MqttMessage
 class MqttBroker;
 class MqttClient
 {
-  using CallBack = void (*)(const MqttClient* source, const Topic& topic, const char* payload, size_t payload_length);
   enum __attribute__((packed)) Flags
   {
     FlagUserName = 128,
@@ -172,31 +179,42 @@ class MqttClient
     FlagCleanSession = 2,  // unsupported
     FlagReserved = 1
   };
+
+  enum __attribute__((packed)) CltFlags
+  {
+    CltFlagNone = 0,
+    CltFlagConnected = 1,
+    CltFlagToDelete = 2
+  };
   public:
+
+    using CallBack = void (*)(const MqttClient* source, const Topic& topic, const char* payload, size_t payload_length);
+
     /** Constructor. Broker is the adress of a local broker if not null
         If you want to connect elsewhere, leave broker null and use connect() **/
-    MqttClient(MqttBroker* broker = nullptr, const std::string& id="");
-    MqttClient(const std::string& id) : MqttClient(nullptr, id){}
+    MqttClient(MqttBroker* broker = nullptr, const string& id = TINY_MQTT_DEFAULT_CLIENT_ID);
+    MqttClient(const string& id) : MqttClient(nullptr, id){}
 
     ~MqttClient();
 
     void connect(MqttBroker* local_broker);
-    void connect(std::string broker, uint16_t port, uint16_t keep_alive = 10);
+    void connect(string broker, uint16_t port, uint16_t keep_alive = 10);
 
     // TODO it seems that connected returns true in tcp mode even if
-    // no negociation occured
+    // no negociation occurred
     bool connected()
     {
-      return (local_broker!=nullptr and client==nullptr) or (client and client->connected());
+      return (local_broker!=nullptr and tcp_client==nullptr)
+           or (tcp_client and tcp_client->connected());
     }
 
     void write(const char* buf, size_t length)
     {
-      if (client) client->write(buf, length);
+      if (tcp_client) tcp_client->write(buf, length);
     }
 
-    const std::string& id() const { return clientId; }
-    void id(std::string& new_id) { clientId = new_id; }
+    const string& id() const { return clientId; }
+    void id(const string& new_id) { clientId = new_id; }
 
     /** Should be called in main loop() */
     void loop();
@@ -214,7 +232,7 @@ class MqttClient
     MqttError publish(const Topic&, const char* payload, size_t pay_length);
     MqttError publish(const Topic& t, const char* payload) { return publish(t, payload, strlen(payload)); }
     MqttError publish(const Topic& t, const String& s) { return publish(t, s.c_str(), s.length()); }
-    MqttError publish(const Topic& t, const std::string& s) { return publish(t,s.c_str(),s.length());}
+    MqttError publish(const Topic& t, const string& s) { return publish(t,s.c_str(),s.length());}
     MqttError publish(const Topic& t) { return publish(t, nullptr, 0);};
 
     MqttError subscribe(Topic topic, uint8_t qos=0);
@@ -223,18 +241,18 @@ class MqttClient
 
     // connected to local broker
     // TODO seems to be useless
-    bool isLocal() const { return client == nullptr; }
+    bool isLocal() const { return tcp_client == nullptr; }
 
-    void dump(std::string indent="")
+    void dump(string indent="")
     {
       (void)indent;
       #if TINY_MQTT_DEBUG
         uint32_t ms=millis();
         Console << indent << "+-- " << '\'' << clientId.c_str() << "' " << (connected() ? " ON " : " OFF");
         Console << ", alive=" << alive << '/' << ms << ", ka=" << keep_alive << ' ';
-        if (client)
+        if (tcp_client)
         {
-          if (client->connected())
+          if (tcp_client->connected())
             Console << TinyConsole::green << "connected";
           else
             Console << TinyConsole::red << "disconnected";
@@ -262,6 +280,9 @@ class MqttClient
     uint32_t keepAlive() const { return keep_alive; }
 
   private:
+    bool mqtt_connected() const { return cltFlags & CltFlagConnected; }
+    void setFlag(CltFlags f) { cltFlags |= f; }
+    void resetFlag(CltFlags f) { cltFlags &= ~f; }
 
     // event when tcp/ip link established (real or fake)
     static void onConnect(void * client_ptr, TcpClient*);
@@ -279,7 +300,7 @@ class MqttClient
     void clientAlive(uint32_t more_seconds);
     void processMessage(MqttMessage* message);
 
-    bool mqtt_connected = false;
+    uint8_t cltFlags = CltFlagNone;
     char mqtt_flags;
     uint32_t keep_alive = 30;
     uint32_t alive;
@@ -289,9 +310,9 @@ class MqttClient
     // when MqttBroker uses MqttClient for each external connexion
     MqttBroker* local_broker=nullptr;
 
-    TcpClient* client=nullptr;    // connection to remote broker
+    TcpClient* tcp_client=nullptr;    // connection to remote broker
     std::set<Topic>  subscriptions;
-    std::string clientId;
+    string clientId;
     CallBack callback = nullptr;
 };
 
@@ -301,7 +322,7 @@ class MqttBroker
   {
     Disconnected,  // Also the initial state
     Connecting,    // connect and sends a fake publish to avoid circular cnx
-    Connected,    // this->broker is connected and circular cnx avoided
+    Connected,     // this->broker is connected and circular cnx avoided
   };
   public:
     // TODO limit max number of clients
@@ -311,12 +332,14 @@ class MqttBroker
     void begin() { server->begin(); }
     void loop();
 
-    void connect(const std::string& host, uint16_t port=1883);
+    /** Connect the broker to a parent broker */
+    void connect(const string& host, uint16_t port=1883);
+    /** returns true if connected to another broker */
     bool connected() const { return state == Connected; }
 
     size_t clientsCount() const { return clients.size(); }
 
-    void dump(std::string indent="")
+    void dump(string indent="")
     {
       for(auto client: clients)
         client->dump(indent);
@@ -351,7 +374,7 @@ class MqttBroker
 
     const char* auth_user = "guest";
     const char* auth_password = "guest";
-    MqttClient* broker = nullptr;
+    MqttClient* remote_broker = nullptr;
 
     State state = Disconnected;
 };
