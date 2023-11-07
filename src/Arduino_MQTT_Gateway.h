@@ -19,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#include "TinyMqtt/TinyMqtt.h"
+#include <PicoMQTT.h>
 #include <ArduinoJson.h>
 #include <string>
 #include <vector>
@@ -151,14 +151,13 @@ class Gateway {
   
   void loop();
 
-  static void onMsg(const TinyMqttClient* client, const Topic& topic, const char* payload, size_t len);
+  static void onMsg(const char * topic, const char * payload);
 
   private:
   bool _started = false;
   uint16_t _port = 1883;
   const char* _hostname = "arduino-broker";
-  MqttBroker* _mqtt_broker;
-  TinyMqttClient* _mqtt_client;
+  PicoMQTT::Server* _mqtt_broker;
   std::vector<Property*> _properties;
 };
 

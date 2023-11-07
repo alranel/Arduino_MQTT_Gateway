@@ -19,9 +19,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#include <ArduinoIoTCloud.h>
 #include "Arduino_MQTT_Gateway.h"
-#include <ESPmDNS.h>
+#include <ArduinoIoTCloud.h>
+#include <ArduinoMDNS.h>
 
 namespace AMG {
 
@@ -30,6 +30,9 @@ namespace AMG {
 // sends regular state updates but we process them after we process cloud changes.
 // In other words, this ensures that cloud changes always win over device states.
 constexpr unsigned long IGNORE_STATES_FOR = 500;
+
+WiFiUDP udp;
+MDNS mdns(udp);
 
 void Gateway::loop()
 {
@@ -42,13 +45,11 @@ void Gateway::loop()
     Serial.println("*** Starting Arduino MQTT Broker ***");
 
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+#ifdef ESP32
     WiFi.setHostname(_hostname);
+#endif
 
-    if (!MDNS.begin(_hostname)) {
-      Serial.println("Error setting up MDNS responder!");
-      while (1) delay(1000);
-    }
-    MDNS.addService("mqtt", "tcp", _port);
+    mdns.begin(WiFi.localIP(), _hostname);
 
     Serial.print("mqtt://");
     Serial.print(_hostname);
@@ -59,19 +60,15 @@ void Gateway::loop()
     Serial.println(")");
 
     // Start the MQTT broker
-    _mqtt_broker = new MqttBroker(_port);
+    _mqtt_broker = new PicoMQTT::Server(_port);
+    _mqtt_broker->subscribe("#", &Gateway::onMsg);
     _mqtt_broker->begin();
-
-    // Start listening for incoming messages
-    _mqtt_client = new TinyMqttClient(_mqtt_broker);
-    _mqtt_client->setCallback(&Gateway::onMsg);
-    _mqtt_client->subscribe("#");
 
     _started = true;
   }
 
+  mdns.run();
   _mqtt_broker->loop();
-  _mqtt_client->loop();
 
   // Check if any variable has changed since last time we saw it.
   // This method is a bit resource-intensive, but since ArduinoIoTCloud does not 
@@ -91,17 +88,17 @@ void Gateway::loop()
         Serial.print("; payload = ");
         Serial.println(p->getCommandPayload().c_str());
 #endif
-        _mqtt_client->publish(p->_command_topic, p->getCommandPayload());
+        _mqtt_broker->publish(p->_command_topic, p->getCommandPayload().c_str());
       }
       p->updateLastSeen();
     }
   }
 }
 
-void Gateway::onMsg(const TinyMqttClient* client, const Topic& topic, const char* payload, size_t len)
+void Gateway::onMsg(const char * topic, const char * payload)
 {
   Serial.print("--> received [");
-  Serial.print(topic.c_str());
+  Serial.print(topic);
   Serial.print("]: ");
   Serial.println(payload);
 
@@ -110,7 +107,7 @@ void Gateway::onMsg(const TinyMqttClient* client, const Topic& topic, const char
   StaticJsonDocument<200> doc;
 
   for (Property* p : ArduinoMQTTGateway._properties) {
-    if (strcmp(topic.c_str(), p->_state_topic) != 0) continue;
+    if (strcmp(topic, p->_state_topic) != 0) continue;
     if ((millis() - p->_last_seen) < IGNORE_STATES_FOR) {
 #ifdef DEBUG_MQTT_GATEWAY
       Serial.print("millis() = ");

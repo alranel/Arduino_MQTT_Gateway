@@ -15,10 +15,11 @@ bool shelly02_relay;
 float shelly02_power;
 float shelly02_temperature;
 
-void initProperties(){
-
+void initProperties() {
+#ifdef BOARD_HAS_SECRET_KEY
   ArduinoCloud.setBoardId(DEVICE_LOGIN_NAME);
   ArduinoCloud.setSecretDeviceKey(DEVICE_KEY);
+#endif
   ArduinoCloud.addProperty(shelly02_temperature, READ, ON_CHANGE, NULL);
   ArduinoCloud.addProperty(shelly02_power, READ, ON_CHANGE, NULL);
   ArduinoCloud.addProperty(shelly02_relay, READWRITE, ON_CHANGE, NULL);
